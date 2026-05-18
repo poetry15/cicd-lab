@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   ci:
-    name: Typecheck, Format Check, and Test
+    name: Typecheck, Format Check, Test, and Coverage
     runs-on: ubuntu-latest
 
     steps:
@@ -35,18 +35,80 @@ jobs:
       - name: Prettier check
         run: npm run format:check
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
           mkdir -p test-results
           npm test -- \
+            --coverage \
+            --coverage.reporter=text \
+            --coverage.reporter=json-summary \
             --reporter=default \
             --reporter=junit \
             --reporter=json \
             --outputFile.junit=test-results/junit.xml \
+            --outputFile.json=test-results/results.json
+
+      - name: Show test and coverage details on Actions page
+        if: always()
+        run: |
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f test-results/results.json ]; then
+            node - <<'EOF' >> $GITHUB_STEP_SUMMARY
+          const fs = require('fs');
+
+          const data = JSON.parse(fs.readFileSync('test-results/results.json', 'utf8'));
+
+          console.log(`- Total tests: ${data.numTotalTests}`);
+          console.log(`- Passed: ${data.numPassedTests}`);
+          console.log(`- Failed: ${data.numFailedTests}`);
+          console.log("");
+
+          console.log("### Test Cases");
+          console.log("");
+
+          for (const file of data.testResults || []) {
+            console.log(`#### ${file.name}`);
+            console.log("");
+
+            for (const test of file.assertionResults || []) {
+              const icon = test.status === "passed" ? "✅" : "❌";
+              console.log(`- ${icon} ${test.fullName}`);
+            }
+
+            console.log("");
+          }
+          EOF
+          else
+            echo "No test result file found." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f coverage/coverage-summary.json ]; then
+            node - <<'EOF' >> $GITHUB_STEP_SUMMARY
+          const fs = require('fs');
+
+          const coverage = JSON.parse(fs.readFileSync('coverage/coverage-summary.json', 'utf8'));
+          const total = coverage.total;
+
+          console.log("| Type | Covered | Total | Percent |");
+          console.log("|---|---:|---:|---:|");
+          console.log(`| Lines | ${total.lines.covered} | ${total.lines.total} | ${total.lines.pct}% |`);
+          console.log(`| Statements | ${total.statements.covered} | ${total.statements.total} | ${total.statements.pct}% |`);
+          console.log(`| Functions | ${total.functions.covered} | ${total.functions.total} | ${total.functions.pct}% |`);
+          console.log(`| Branches | ${total.branches.covered} | ${total.branches.total} | ${total.branches.pct}% |`);
+          EOF
+          else
+            echo "No coverage report found." >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Publish test results
         uses: dorny/test-reporter@v1
-        if: always()
+        if: always() && hashFiles('test-results/junit.xml') != ''
         with:
           name: Test Results
           path: test-results/junit.xml
